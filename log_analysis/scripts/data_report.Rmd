@@ -1,0 +1,247 @@
+---
+title: "MDCS bandwidth Analyze"
+date: '2021-06-26'
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+-----------------------------------------------------
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(lubridate)
+# ggrepel: display the values of your pie chart outside for styling or because the labels doesn’t fit inside the slices
+library(ggrepel)
+
+# 加载原始数据文件
+channel_bytes <- read_csv("D:/workspace/mdcs_analyze/channel_bytes_total.csv")
+# 加载频道类型元数据
+#channel_type <- read_csv("D:/workspace/mdcs_analyze/channel_type.csv")
+channel_type <- tribble(
+  ~Channel,~Type,
+  #--|----
+  1,"其他",
+  10,"其他",
+  1011,"股票",
+  1012,"股票",
+  1013,"股票",
+  1014,"股票",
+  1021,"其他",
+  1022,"其他",
+  1023,"其他",
+  1024,"其他",
+  1031,"债券",
+  1032,"债券",
+  1033,"债券",
+  1034,"债券",
+  1041,"其他",
+  1042,"其他",
+  1043,"其他",
+  1044,"其他",
+  1051,"期权",
+  1061,"债券",
+  11,"转发",
+  2,"其他",
+  3001,"其他",
+  3011,"其他",
+  4001,"其他",
+  5001,"转发",
+  10001,"管理",
+  0,"total"
+)
+
+# 关联频道类型，并将时间格式化到秒
+f_channel <- left_join(channel_bytes, channel_type) %>%
+  mutate(Time=ymd_hms(Time))
+
+# 汇总同一时间、同一类型的字节总数
+f_channel_group <- group_by(f_channel, Time, Type) %>%
+  summarise(TotalBytes=sum(SentBytes))
+
+# 过滤时间范围
+f_channel_md_range <- filter(f_channel_group, Type != "管理", Time > ymd_hms("2021-06-07 09:29:00"), Time < ymd_hms("2021-06-07 15:30:00"))
+#f_channel_md <- filter(f_channel_group, Type != "管理")
+
+# 按照Type及时间线计算带宽
+f_channel_md_bandwidth <- f_channel_md_range %>%
+  group_by(Type) %>%
+  arrange(Time) %>%
+  mutate(bandwidth = round((TotalBytes - lag(TotalBytes, default = first(TotalBytes)))/1000/180*8,2))
+```
+
+The bandwidth of `r as_date(f_channel_md_bandwidth[[1,"Time"]])` is shown
+below:
+
+```{r line_chart, echo=FALSE}
+ggplot(data = f_channel_md_bandwidth) + 
+  geom_line(mapping = aes(x = Time, y = bandwidth, color = Type)) +
+  ylab("Kbps")
+```
+
+```{r open_bandwidth_info, include=FALSE}
+open_bandwidth_info <- f_channel_md_bandwidth %>%
+  filter(Time >= ymd_hms("2021-06-07 09:29:05"), Time <= ymd_hms("2021-06-07 09:42:05")) %>% 
+  select(Time, Type, bandwidth) %>%
+  pivot_wider(names_from=Type,values_from=bandwidth)
+```
+
+Bandwidth(Kbps) info between `r format(open_bandwidth_info[[2,"Time"]], format = "%H:%M:%S")` - `r format(open_bandwidth_info[[nrow(open_bandwidth_info),"Time"]], format = "%H:%M:%S")` is shown below:
+
+```{r echo=FALSE}
+open_bandwidth_info[2:nrow(open_bandwidth_info),]
+```
+
+--------------------------------------------------------
+Bandwidth ratio at  `r open_bandwidth_info[[2,"Time"]]` is shown below:
+
+```{r pie_setup, include=FALSE}
+# 查看某一个时点的各个类型的带宽占比情况
+
+pie_timepoint <- f_channel_md_bandwidth %>%
+  filter(Time == open_bandwidth_info[[2,"Time"]], Type != "total")
+total_bandwidth <- sum(pie_timepoint$bandwidth)
+pie_timepoint <- pie_timepoint %>%
+  mutate(percent = (round(bandwidth/total_bandwidth,3)*100))
+
+# 计算各个类型在饼状态中的位置信息
+pie_timepoint_pos <- as.data.frame(pie_timepoint) %>% 
+  mutate(csum = rev(cumsum(rev(percent))), 
+         pos = percent/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), percent/2, pos))
+```
+
+```{r pie_chart, echo=FALSE}
+
+ggplot(pie_timepoint, aes(x = "", y = percent, fill = Type)) +
+  geom_col(color = "black") +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Pastel1") +
+  geom_label_repel(data = pie_timepoint_pos,
+                   aes(y = pos, label = paste0(percent, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Type")) +
+  theme_void()
+```
+
+Bandwidth ratio at  `r open_bandwidth_info[[3,"Time"]]` is shown below:
+```{r pie_setup_2, include=FALSE}
+# 查看某一个时点的各个类型的带宽占比情况
+pie_timepoint <- f_channel_md_bandwidth %>%
+  filter(Time == open_bandwidth_info[[3,"Time"]], Type != "total")
+total_bandwidth <- sum(pie_timepoint$bandwidth)
+pie_timepoint <- pie_timepoint %>%
+  mutate(percent = (round(bandwidth/total_bandwidth,3)*100))
+
+# 计算各个类型在饼状态中的位置信息
+pie_timepoint_pos <- as.data.frame(pie_timepoint) %>% 
+  mutate(csum = rev(cumsum(rev(percent))), 
+         pos = percent/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), percent/2, pos))
+```
+
+```{r pie_chart_2, echo=FALSE}
+
+ggplot(pie_timepoint, aes(x = "", y = percent, fill = Type)) +
+  geom_col(color = "black") +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Pastel1") +
+  geom_label_repel(data = pie_timepoint_pos,
+                   aes(y = pos, label = paste0(percent, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Type")) +
+  theme_void()
+```
+
+Bandwidth ratio at  `r open_bandwidth_info[[4,"Time"]]` is shown below:
+```{r pie_setup_3, include=FALSE}
+# 查看某一个时点的各个类型的带宽占比情况
+pie_timepoint <- f_channel_md_bandwidth %>%
+  filter(Time == open_bandwidth_info[[4,"Time"]], Type != "total")
+total_bandwidth <- sum(pie_timepoint$bandwidth)
+pie_timepoint <- pie_timepoint %>%
+  mutate(percent = (round(bandwidth/total_bandwidth,3)*100))
+
+# 计算各个类型在饼状态中的位置信息
+pie_timepoint_pos <- as.data.frame(pie_timepoint) %>% 
+  mutate(csum = rev(cumsum(rev(percent))), 
+         pos = percent/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), percent/2, pos))
+```
+
+```{r pie_chart_3, echo=FALSE}
+
+ggplot(pie_timepoint, aes(x = "", y = percent, fill = Type)) +
+  geom_col(color = "black") +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Pastel1") +
+  geom_label_repel(data = pie_timepoint_pos,
+                   aes(y = pos, label = paste0(percent, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Type")) +
+  theme_void()
+```
+
+Bandwidth ratio at  `r open_bandwidth_info[[5,"Time"]]` is shown below:
+```{r pie_setup_4, include=FALSE}
+# 查看某一个时点的各个类型的带宽占比情况
+pie_timepoint <- f_channel_md_bandwidth %>%
+  filter(Time == open_bandwidth_info[[5,"Time"]], Type != "total")
+total_bandwidth <- sum(pie_timepoint$bandwidth)
+pie_timepoint <- pie_timepoint %>%
+  mutate(percent = (round(bandwidth/total_bandwidth,3)*100))
+
+# 计算各个类型在饼状态中的位置信息
+pie_timepoint_pos <- as.data.frame(pie_timepoint) %>% 
+  mutate(csum = rev(cumsum(rev(percent))), 
+         pos = percent/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), percent/2, pos))
+```
+```{r pie_chart_4, echo=FALSE}
+
+ggplot(pie_timepoint, aes(x = "", y = percent, fill = Type)) +
+  geom_col(color = "black") +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Pastel1") +
+  geom_label_repel(data = pie_timepoint_pos,
+                   aes(y = pos, label = paste0(percent, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Type")) +
+  theme_void()
+```
+
+---------------------------------------------
+
+频道与类别对照关系
+
+  Channel|Type
+  --|--
+  1|"其他"
+  10|"其他"
+  1011|"股票"
+  1012|"股票"
+  1013|"股票"
+  1014|"股票"
+  1021|"其他"
+  1022|"其他"
+  1023|"其他"
+  1024|"其他"
+  1031|"债券"
+  1032|"债券"
+  1033|"债券"
+  1034|"债券"
+  1041|"其他"
+  1042|"其他"
+  1043|"其他"
+  1044|"其他"
+  1051|"期权"
+  1061|"债券"
+  11|"转发"
+  2|"其他"
+  3001|"其他"
+  3011|"其他"
+  4001|"其他"
+  5001|"转发"
+  10001|"管理"
+  0|"total"
